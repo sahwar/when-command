@@ -218,6 +218,7 @@ FN_IN_MODIFY_EVENTS = 1998
 # environment variables to be set when spawning processes
 ENVVAR_NAME_TASK = 'WHEN_COMMAND_TASK'
 ENVVAR_NAME_COND = 'WHEN_COMMAND_CONDITION'
+ENVVAR_EVENT_DATA = 'WHEN_COMMAND_EVENT_DATA'
 ENVVAR_UNKNOWN_COND = '(unknown)'
 
 
@@ -266,6 +267,7 @@ conditions = None
 history = None
 deferred_events = None
 deferred_watch_paths = None
+event_data = None
 signal_handlers = None
 stock_signal_handlers = None
 watch_path_manager = None
@@ -2622,6 +2624,43 @@ class DeferredWatchPaths(object):
         return rv
 
 
+# event data is a list of objects when the event has data and None otherwise
+class EventData(object):
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._data = {}
+
+    def get(self, index, clear=True):
+        if index in self._data:
+            rv = self._data[index]
+            if clear:
+                self._lock.acquire()
+                del self._data[index]
+                self._lock.release()
+            return rv
+        else:
+            return None
+
+    def clear(self, index=None):
+        if index is None:
+            self._lock.acquire()
+            self._data = {}
+            self._lock.release()
+        else:
+            if index in self._data:
+                self._lock.acquire()
+                del self._data[index]
+                self._lock.release()
+
+    def push(self, index, data):
+        self._lock.acquire()
+        if index not in self._data:
+            self._data[index] = []
+        self._data[index].append(data)
+        self._lock.release()
+
+
 #############################################################################
 # The main Task class: this represents a certain task registered in the
 # application. It contains all information about the task to execute, as well
@@ -2747,6 +2786,14 @@ class Task(object):
                     env[ENVVAR_NAME_TASK] = self.task_name
                     env[ENVVAR_NAME_COND] = (
                         trigger_name if trigger_name else ENVVAR_UNKNOWN_COND)
+                    data = (
+                        event_data.get(trigger_name, False) if trigger_name
+                        else None)
+                    if data:
+                        try:
+                            env[ENVVAR_EVENT_DATA] = json.dumps(data)
+                        except ValueError as e:
+                            self._warning("[trigger: %s] cannot serialize event data (%s)" % (trigger_name, _x(e)))
             else:
                 env = self.environment_vars
         else:
@@ -2755,6 +2802,14 @@ class Task(object):
                 env[ENVVAR_NAME_TASK] = self.task_name
                 env[ENVVAR_NAME_COND] = (
                     trigger_name if trigger_name else ENVVAR_UNKNOWN_COND)
+                data = (
+                    event_data.get(trigger_name, False) if trigger_name
+                    else None)
+                if data:
+                    try:
+                        env[ENVVAR_EVENT_DATA] = json.dumps(data)
+                    except ValueError as e:
+                        self._warning("[trigger: %s] cannot serialize event data (%s)" % (trigger_name, _x(e)))
             else:
                 env = None
         startup_time = time.time()
@@ -6898,6 +6953,7 @@ def main():
     global watch_path_manager
     global watch_path_notifier
     global deferred_events
+    global event_data
     global deferred_watch_paths
     global idle_time_checker
     global ui_add_task
