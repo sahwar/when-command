@@ -2653,11 +2653,11 @@ class EventData(object):
                 del self._data[index]
                 self._lock.release()
 
-    def push(self, index, data):
+    def push(self, index, **data):
         self._lock.acquire()
         if index not in self._data:
             self._data[index] = []
-        self._data[index].append(data)
+        self._data[index].append(**data)
         self._lock.release()
 
 
@@ -3282,6 +3282,7 @@ class Condition(object):
                 self._info("parallel run of tasks %s" % ", ".join(foundnames))
                 with ThreadPoolExecutor(config.get('Concurrency', 'max threads')) as e:
                     e.map(lambda task: task.run(self.cond_name), localtasks)
+            event_data.clear(self.cond_name)
 
 
 # convert a condition to a dictionary and back
@@ -3352,6 +3353,7 @@ class IntervalBasedCondition(Condition):
             t = time.time()
             if self.interval <= round(t - self.checked):
                 self.checked = t
+                event_data.push(self.cond_name, time=t)
                 return True
         return False
 
@@ -3416,6 +3418,7 @@ class TimeBasedCondition(Condition):
         span = max(self.tick_seconds, self.skip_seconds)
         self._debug("checking %.3f - %.3f (=%.3f) in [0-%s]" % (cur_time, test_time, cur_time - test_time, span))
         if 0 < cur_time - test_time <= span:
+            event_data.push(self.cond_name, time=cur_time)
             return True
         else:
             return False
@@ -3499,6 +3502,8 @@ class CommandBasedCondition(Condition):
                     self._info("checking condition command exit status")
                     self._debug("test: %s == %s" % (proc.returncode, self.expected_status))
                     if int(proc.returncode) == self.expected_status:
+                        event_data.push(self.cond_name,
+                                        status=self.expected_status)
                         return True
                 elif self.expected_stdout:
                     self._info("checking condition command output")
@@ -3513,9 +3518,13 @@ class CommandBasedCondition(Condition):
                         try:
                             if self.match_exact:
                                 if re.match(expected, returned, flags) is not None:
+                                    event_data.push(self.cond_name,
+                                                    stdout=returned)
                                     return True
                             else:
                                 if re.search(expected, returned, flags) is not None:
+                                    event_data.push(self.cond_name,
+                                                    stdout=returned)
                                     return True
                         except:
                             self._warning("invalid regular expression (skipped)")
@@ -3526,10 +3535,12 @@ class CommandBasedCondition(Condition):
                         if self.match_exact:
                             self._debug("test: '%s' == '%s'" % (expected, returned))
                             if expected == returned:
+                                event_data.push(self.cond_name, stdout=returned)
                                 return True
                         else:
                             self._debug("test: '%s' in '%s'" % (expected, returned))
                             if expected in returned:
+                                event_data.push(self.cond_name, stdout=returned)
                                 return True
                 elif self.expected_stderr:
                     self._info("checking condition command error output")
@@ -3544,9 +3555,13 @@ class CommandBasedCondition(Condition):
                         try:
                             if self.match_exact:
                                 if re.match(expected, returned, flags) is not None:
+                                    event_data.push(self.cond_name,
+                                                    stderr=returned)
                                     return True
                             else:
                                 if re.search(expected, returned, flags) is not None:
+                                    event_data.push(self.cond_name,
+                                                    stderr=returned)
                                     return True
                         except:
                             self._warning("invalid regular expression (skipped)")
@@ -3557,10 +3572,12 @@ class CommandBasedCondition(Condition):
                         if self.match_exact:
                             self._debug("test: '%s' == '%s'" % (expected, returned))
                             if expected == returned:
+                                event_data.push(self.cond_name, stderr=returned)
                                 return True
                         else:
                             self._debug("test: '%s' in '%s'" % (expected, returned))
                             if expected in returned:
+                                event_data.push(self.cond_name, stderr=returned)
                                 return True
                 self._debug("test failed")
                 return False
@@ -3656,8 +3673,10 @@ class IdleTimeBasedCondition(Condition):
 
     def _check_condition(self):
         if self.idle_reset:
-            if idle_time_checker.idle_milliseconds >= self.idle_secs * 1000:
+            check = idle_time_checker.idle_milliseconds
+            if check >= self.idle_secs * 1000:
                 self.idle_reset = False
+                event_data.push(self.cond_name, idle=check)
                 return True
             else:
                 self.idle_reset = True
